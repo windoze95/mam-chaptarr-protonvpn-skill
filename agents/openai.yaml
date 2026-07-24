@@ -1,0 +1,4 @@
+interface:
+  display_name: "MyAnonaMouse via ProtonVPN"
+  short_description: "Build and recover isolated Chaptarr VPN stacks"
+  default_prompt: "Use $mam-chaptarr-protonvpn to deploy or troubleshoot a VPN-isolated MAM, Chaptarr, and qBittorrent stack."

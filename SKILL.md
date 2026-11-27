@@ -248,15 +248,15 @@ Publish the required Chrome/Selkies listener on Gluetun, never on Chrome. Requir
 
 Before logging into MAM, confirm the browser's public IP/ASN matches qBittorrent in that gateway. Stop Gluetun and confirm the browser cannot load a new site, then restore the gateway. A bridge-mode browser using Gluetun's HTTP proxy is a fallback only; an application proxy does not remove the browser container's ordinary direct route by itself.
 
-Create two session roles; never reuse one cookie for both.
+Create two session roles; never reuse one cookie for both. The account owner performs signed-in MAM web steps and transfers credentials directly to the owning service. Do not automate the signed-in MAM website or take its browser credentials; use only supported MAM API workflows allowed by the [tracker rules](https://www.myanonamouse.net/rules.php).
 
 ### Chaptarr indexer session
 
 1. Open an IP-check site and confirm the target Proton exit IP/ASN, not the ISP.
-2. Log in to MyAnonaMouse only in this browser.
-3. Open Preferences → Security → Create session.
-4. Choose **ASN locked**, set **Allow Session to set Dynamic Seedbox** to **No**, and label the session for the exact Chaptarr instance.
-5. Open Cookie Info and copy `mam_id` losslessly into that Chaptarr instance only. Never retype it over VNC.
+2. Have the account owner log in to MyAnonaMouse in that browser.
+3. Have the account owner open **Preferences → Security → Create session for downloading .torrent files or accessing API end points**. The **IP** field is the live public IP of the target Chaptarr namespace, not its LAN address or the operator's browser IP. Give the owner the verified IP privately rather than asking them to infer it.
+4. Choose **ASN locked**, set **Allow Session to set Dynamic Seedbox** to **No**, label the session for the exact Chaptarr instance, and click **Submit Changes!**.
+5. Copy the long value labeled `mam_id` on the resulting page (Cookie Info) directly into **Settings → Indexers → MyAnonaMouse → mam_id** on that Chaptarr instance. Copy the value only, not the label, browser login cookie, or tracker passkey. Run **Test → Save** without printing or relaying the value.
 
 Create one indexer session per Chaptarr instance even if two gateways currently exit through the same ASN. Never put the token in diagnostic output or the skill.
 
@@ -303,7 +303,7 @@ In the target Chaptarr instance:
 
 `localhost` is correct because Chaptarr, qBittorrent, and Gluetun share one network namespace.
 
-Chaptarr does not persist a failing MAM indexer test; it can appear to revert to the older token. Treat a 403 authentication failure as a stale or corrupted `mam_id` after basic tunnel connectivity is proven. Generate a fresh session and paste it losslessly.
+A failing MAM indexer test can prevent saving and leave the old token in place. A 403 or `Authentication failed` means Chaptarr's MAM request was rejected; it does not establish whether the token expired or its IP/ASN is wrong. Check this indexer's live VPN egress and session scope before replacing only the affected session. On older builds, Chaptarr could discard refreshed session cookies and reuse the original until it expired ([upstream fix #308](https://github.com/Chaptarr/chaptarr/pull/308)). Compare the **installed build** with the fix; a merged development PR does not mean the installed image contains it.
 
 ## Verify end to end
 
@@ -321,8 +321,9 @@ Then verify in the UI:
 
 - Mousehole is healthy and its last run is successful (`OK`, `Completed`, or `No change`); its observed public IP matches qBittorrent's tracker-facing IP.
 - While the VPN browser is running, its IP/ASN matches that same gateway and it loses internet access when the gateway is stopped.
-- Chaptarr System → Status shows no MAM indexer outage.
-- A search and Grab creates a Queue item with live progress.
+- Chaptarr System → Status shows no MAM indexer outage. A green qBittorrent client test only verifies the WebUI connection, and Mousehole success only verifies the updater. Neither proves Chaptarr can search MAM.
+- On a known title's detail page, use the **Search** tab with the intended media type and verify an actual **MyAnonaMouse** result without grabbing. A global/Add New catalog lookup tests metadata, not MAM. If MAM works and other indexers are still failing, report those separately.
+- For an authorized end-to-end test, a Grab creates a Queue item with live progress, the intended file imports, and the requester can open it from their normal account when a request front end is in scope.
 - qBittorrent's MAM tracker status is working, not `Unrecognized host/PassKey`, and peer traffic begins. In Web API tracker results, status `2` is `Working`; inspect only `status` and a redacted `msg`, never print the tracker `url` because it contains the passkey.
 - qBittorrent's listening port equals the current Gluetun forwarded port.
 - The gateway's exit IP/ASN remains Proton.
@@ -371,6 +372,22 @@ Confirm the host port is published on Gluetun, the application listens on the ma
 
 Treat this as expected on Gluetun versions with control-server authentication. Use `docker exec` or configure auth deliberately. Browser requests from an HTTPS Unraid page may also fail because the gateway API is plain HTTP mixed content.
 
+### MAM searches fail while qBittorrent and Mousehole tests pass
+
+Test the native MyAnonaMouse indexer in the specific Chaptarr instance with **Interactive Search** enabled. If there is an authentication error, verify its current exit before asking the owner to replace the session. If the image lacks curl, on the Docker host use its running network namespace without installing anything:
+
+```sh
+chaptarr='<CHAPTARR_CONTAINER>'
+pid=$(docker inspect --format='{{.State.Pid}}' "$chaptarr")
+test "$pid" -gt 0 && nsenter -t "$pid" -n -- curl -4fsS --max-time 10 https://api.ipify.org
+```
+
+Replace the placeholder with the actual container name and confirm it shares the expected gateway. The probe does not exercise a configured application proxy; if one is enabled, verify the indexer path separately. Track updater health and Chaptarr indexer auth independently so a healthy updater cannot mask a search outage. Alert on a sustained failure and recovery rather than polling MAM aggressively.
+
+### MAM tracker says `Non-Whitelisted client or version`
+
+Check the running qBittorrent version against MAM's current [Allowed Clients](https://www.myanonamouse.net/tor/allowed_clients.php). A floating image tag can cross into an unapproved version. Pin the affected stack to a currently allowed image and preserve its appdata, queue, paths, and gateway binding. Check WebUI login and the forwarding helper after a recreation, then verify the actual tracker status. Do not rotate a MAM session to fix a rejected client version.
+
 ### MAM tracker says `Unrecognized host/PassKey`
 
 Do not change qBittorrent's WebUI username/password; those credentials are unrelated to MAM's tracker passkey.
@@ -393,6 +410,10 @@ If two qBittorrent clients show different public IPs, give each gateway its own 
 Treat this as a separate filesystem problem. Inspect the torrent's save path, temporary/incomplete path, category subdirectory, qBittorrent process UID/GID, and exact directory ownership and mode. Create a missing category directory and grant only the access required by the container identity. Do not keep changing MAM sessions, VPN routing, or tracker settings once the tracker is working.
 
 After correcting the exact path, resume or force-start the torrent and require data transfer or a completed/seeding state. A working tracker does not repair an unwritable or nonexistent local download directory.
+
+### Chaptarr says Manual Import Required for a book already imported
+
+Check the book's **History** and **Files** against the queued release first. If the matching file is already in the intended library and the torrent should keep seeding, clear only the stale queue entry with **Ignore Download**, without blocklisting. Do not choose **Remove from Download Client** or re-import a duplicate. Recheck that the library file is present, the queue warning cleared, and the original torrent is still seeding.
 
 ## Completion checklist
 
